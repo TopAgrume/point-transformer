@@ -27,7 +27,9 @@ The codebase is provided by the first author of [Point Transformer](https://arxi
 
 ## Usage
 - Shape classification on ModelNet40
-  - For now, please use paconv-codebase branch.
+  ```
+  sh tool/train.sh modelnet40 pointtransformer_cls
+  ```
 - Part segmentation on ShapeNetPart
   - For now, please use paconv-codebase branch.
 - Semantic segmantation on S3DIS Area 5
