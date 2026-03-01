@@ -1,0 +1,55 @@
+DATA:
+  data_name: modelnet40 # updated
+  data_root: dataset/modelnet40_normal_resampled # updated
+  classes: 40 # updated
+  fea_dim: 6 # updated
+  loop: 1
+
+TRAIN:
+  arch: pointtransformer_cls # updated
+  use_xyz: True
+  sync_bn: False
+  ignore_label: 255
+  train_gpu: [0] # updated
+  workers: 4
+  batch_size: 16  # updated
+  batch_size_val: 16
+  base_lr: 0.001 #0.025 # updated
+  epochs: 100 # updated
+  start_epoch: 0
+  step_epoch: 30
+  multiplier: 0.1
+  momentum: 0.9
+  weight_decay: 0.01 #0.0001
+  drop_rate: 0.5
+  manual_seed: 7777
+  print_freq: 10
+  save_freq: 1
+  save_path:
+  weight:
+  resume:
+  evaluate: True
+  eval_freq: 1
+
+STUDY:
+  num_neighbors_k: 8
+  pos_enc: relative
+  attn_type: vector
+  optimizer_name: adamw
+  scheduler_name: onecycle
+
+Distributed:
+  dist_url: tcp://localhost:8888
+  dist_backend: 'nccl'
+  multiprocessing_distributed: False # updated
+  world_size: 1
+  rank: 0
+
+TEST:
+  split: test # updated
+  test_gpu: [0]
+  test_workers: 4
+  batch_size_test: 32 # updated
+  model_path:
+  save_folder:
+  names_path: data/modelnet40/modelnet40_shape_names.txt # updated

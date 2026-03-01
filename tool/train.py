@@ -18,16 +18,17 @@ import torch.optim.lr_scheduler as lr_scheduler
 from tensorboardX import SummaryWriter
 
 from util import config
-from util.s3dis import S3DIS
+from util.modelnet40 import ModelNet40 # updated
 from util.common_util import AverageMeter, intersectionAndUnionGPU, find_free_port
 from util.data_util import collate_fn
 from util import transform as t
 
 
 def get_parser():
-    parser = argparse.ArgumentParser(description='PyTorch Point Cloud Semantic Segmentation')
-    parser.add_argument('--config', type=str, default='config/s3dis/s3dis_pointtransformer_repro.yaml', help='config file')
-    parser.add_argument('opts', help='see config/s3dis/s3dis_pointtransformer_repro.yaml for all options', default=None, nargs=argparse.REMAINDER)
+    # updated
+    parser = argparse.ArgumentParser(description='PyTorch Point Cloud Classification')
+    parser.add_argument('--config', type=str, default='config/modelnet40/modelnet40_pointtransformer.yaml', help='config file')
+    parser.add_argument('opts', help='see config/modelnet40/modelnet40_pointtransformer.yaml for all options', default=None, nargs=argparse.REMAINDER)
     args = parser.parse_args()
     assert args.config is not None
     cfg = config.load_cfg_from_cfg_file(args.config)
@@ -76,9 +77,9 @@ def main():
         args.distributed = False
         args.multiprocessing_distributed = False
 
-    if args.data_name == 's3dis':
-        S3DIS(split='train', data_root=args.data_root, test_area=args.test_area)
-        S3DIS(split='val', data_root=args.data_root, test_area=args.test_area)
+    if args.data_name == 'modelnet40': # updated
+        ModelNet40(split='train', data_root=args.data_root)
+        ModelNet40(split='test', data_root=args.data_root)
     else:
         raise NotImplementedError()
     if args.multiprocessing_distributed:
@@ -91,8 +92,8 @@ def main():
 
 
 def main_worker(gpu, ngpus_per_node, argss):
-    global args, best_iou
-    args, best_iou = argss, 0
+    global args, best_acc # updated
+    args, best_acc = argss, 0
     if args.distributed:
         if args.dist_url == "env://" and args.rank == -1:
             args.rank = int(os.environ["RANK"])
@@ -100,23 +101,60 @@ def main_worker(gpu, ngpus_per_node, argss):
             args.rank = args.rank * ngpus_per_node + gpu
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url, world_size=args.world_size, rank=args.rank)
 
-    if args.arch == 'pointtransformer_seg_repro':
-        from model.pointtransformer.pointtransformer_seg import pointtransformer_seg_repro as Model
+    # updated
+    if args.arch == 'pointtransformer_cls':
+        from model.pointtransformer.pointtransformer_cls import pointtransformer_cls as Model
     else:
         raise Exception('architecture not supported yet'.format(args.arch))
-    model = Model(c=args.fea_dim, k=args.classes)
+    model = Model(
+        c=args.fea_dim, k=args.classes, num_neighbors_k=args.num_neighbors_k,
+        pos_enc=args.pos_enc, attn_type=args.attn_type
+    )
     if args.sync_bn:
        model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
-    criterion = nn.CrossEntropyLoss(ignore_index=args.ignore_label).cuda()
 
-    optimizer = torch.optim.SGD(model.parameters(), lr=args.base_lr, momentum=args.momentum, weight_decay=args.weight_decay)
-    scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[int(args.epochs*0.6), int(args.epochs*0.8)], gamma=0.1)
+    # updated
+    train_transform = t.Compose([t.RandomScale([0.9, 1.1]), t.ChromaticAutoContrast(), t.ChromaticTranslation(), t.ChromaticJitter(), t.HueSaturationTranslation()])
+    train_data = ModelNet40(split='train', data_root=args.data_root, transform=train_transform, loop=args.loop)
+
+    if args.distributed:
+        train_sampler = torch.utils.data.distributed.DistributedSampler(train_data)
+    else:
+        train_sampler = None
+    train_loader = torch.utils.data.DataLoader(train_data, batch_size=args.batch_size, shuffle=(train_sampler is None), num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True, collate_fn=collate_fn)
+
+
+    # updated
+    criterion = nn.CrossEntropyLoss().cuda()
+
+    opt_name = args.optimizer_name
+    if opt_name == 'sgd':
+        optimizer = torch.optim.SGD(model.parameters(), lr=args.base_lr, momentum=args.momentum, weight_decay=args.weight_decay)
+    elif opt_name == 'adamw':
+        optimizer = torch.optim.AdamW(model.parameters(), lr=args.base_lr, weight_decay=args.weight_decay)
+    elif opt_name == 'madgrad':
+        import madgrad
+        optimizer = madgrad.MADGRAD(model.parameters(), lr=args.base_lr, momentum=args.momentum, weight_decay=args.weight_decay)
+    else:
+        raise ValueError(f"Optimizer not supported: {opt_name}")
+
+    sched_name = args.scheduler_name
+    if sched_name == 'multistep':
+        scheduler = lr_scheduler.MultiStepLR(optimizer, milestones=[int(args.epochs*0.6), int(args.epochs*0.8)], gamma=0.1)
+    elif sched_name == 'onecycle':
+        scheduler = lr_scheduler.OneCycleLR(optimizer, max_lr=args.base_lr, steps_per_epoch=len(train_loader), epochs=args.epochs, final_div_factor=100.0)
+    elif sched_name == 'cosine':
+        scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-5)
+    else:
+        raise ValueError(f"Scheduler not supported: {sched_name}")
 
     if main_process():
         global logger, writer
         logger = get_logger()
         writer = SummaryWriter(args.save_path)
         logger.info(args)
+        logger.info("Optimizer: {}".format(args.optimizer_name))
+        logger.info("Scheduler: {}".format(args.scheduler_name))
         logger.info("=> creating model ...")
         logger.info("Classes: {}".format(args.classes))
         logger.info(model)
@@ -154,28 +192,22 @@ def main_worker(gpu, ngpus_per_node, argss):
             model.load_state_dict(checkpoint['state_dict'], strict=True)
             optimizer.load_state_dict(checkpoint['optimizer'])
             scheduler.load_state_dict(checkpoint['scheduler'])
-            #best_iou = 40.0
-            best_iou = checkpoint['best_iou']
+            #best_acc = 40.0
+            best_acc = checkpoint['best_acc'] # updated
             if main_process():
                 logger.info("=> loaded checkpoint '{}' (epoch {})".format(args.resume, checkpoint['epoch']))
         else:
             if main_process():
                 logger.info("=> no checkpoint found at '{}'".format(args.resume))
 
-    train_transform = t.Compose([t.RandomScale([0.9, 1.1]), t.ChromaticAutoContrast(), t.ChromaticTranslation(), t.ChromaticJitter(), t.HueSaturationTranslation()])
-    train_data = S3DIS(split='train', data_root=args.data_root, test_area=args.test_area, voxel_size=args.voxel_size, voxel_max=args.voxel_max, transform=train_transform, shuffle_index=True, loop=args.loop)
     if main_process():
-            logger.info("train_data samples: '{}'".format(len(train_data)))
-    if args.distributed:
-        train_sampler = torch.utils.data.distributed.DistributedSampler(train_data)
-    else:
-        train_sampler = None
-    train_loader = torch.utils.data.DataLoader(train_data, batch_size=args.batch_size, shuffle=(train_sampler is None), num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True, collate_fn=collate_fn)
+        logger.info("train_data samples: '{}'".format(len(train_data)))
 
     val_loader = None
     if args.evaluate:
         val_transform = None
-        val_data = S3DIS(split='val', data_root=args.data_root, test_area=args.test_area, voxel_size=args.voxel_size, voxel_max=800000, transform=val_transform)
+        # updated
+        val_data = ModelNet40(split='test', data_root=args.data_root, transform=val_transform)
         if args.distributed:
             val_sampler = torch.utils.data.distributed.DistributedSampler(val_data)
         else:
@@ -185,82 +217,101 @@ def main_worker(gpu, ngpus_per_node, argss):
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             train_sampler.set_epoch(epoch)
-        loss_train, mIoU_train, mAcc_train, allAcc_train = train(train_loader, model, criterion, optimizer, epoch)
-        scheduler.step()
+        # updated
+        loss_train, mAcc_train, OA_train = train(train_loader, model, criterion, optimizer, epoch, scheduler)
+        current_lr = optimizer.param_groups[0]['lr']
+
+        if sched_name != 'onecycle':
+            scheduler.step()
+
         epoch_log = epoch + 1
         if main_process():
+            logger.info(f"Epoch: [{epoch_log}/{args.epochs}] Current LR: {current_lr:.6f}")
             writer.add_scalar('loss_train', loss_train, epoch_log)
-            writer.add_scalar('mIoU_train', mIoU_train, epoch_log)
             writer.add_scalar('mAcc_train', mAcc_train, epoch_log)
-            writer.add_scalar('allAcc_train', allAcc_train, epoch_log)
+            writer.add_scalar('OA_train', OA_train, epoch_log)
 
         is_best = False
         if args.evaluate and (epoch_log % args.eval_freq == 0):
             if args.data_name == 'shapenet':
                 raise NotImplementedError()
             else:
-                loss_val, mIoU_val, mAcc_val, allAcc_val = validate(val_loader, model, criterion)
+                # updated
+                loss_val, mAcc_val, OA_val = validate(val_loader, model, criterion)
 
             if main_process():
                 writer.add_scalar('loss_val', loss_val, epoch_log)
-                writer.add_scalar('mIoU_val', mIoU_val, epoch_log)
                 writer.add_scalar('mAcc_val', mAcc_val, epoch_log)
-                writer.add_scalar('allAcc_val', allAcc_val, epoch_log)
-                is_best = mIoU_val > best_iou
-                best_iou = max(best_iou, mIoU_val)
+                writer.add_scalar('allAcc_val', OA_val, epoch_log)
+                is_best = OA_val > best_acc
+                best_acc = max(best_acc, OA_val)
 
         if (epoch_log % args.save_freq == 0) and main_process():
             filename = args.save_path + '/model/model_last.pth'
             logger.info('Saving checkpoint to: ' + filename)
             torch.save({'epoch': epoch_log, 'state_dict': model.state_dict(), 'optimizer': optimizer.state_dict(),
-                        'scheduler': scheduler.state_dict(), 'best_iou': best_iou, 'is_best': is_best}, filename)
+                        'scheduler': scheduler.state_dict(), 'best_acc': best_acc, 'is_best': is_best}, filename)
             if is_best:
-                logger.info('Best validation mIoU updated to: {:.4f}'.format(best_iou))
+                logger.info('Best validation mAcc updated to: {:.4f}'.format(best_acc))
                 shutil.copyfile(filename, args.save_path + '/model/model_best.pth')
 
     if main_process():
         writer.close()
-        logger.info('==>Training done!\nBest Iou: %.3f' % (best_iou))
+        logger.info('==>Training done!\nBest Acc: %.3f' % (best_acc))
 
 
-def train(train_loader, model, criterion, optimizer, epoch):
+def train(train_loader, model, criterion, optimizer, epoch, scheduler=None):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     loss_meter = AverageMeter()
-    intersection_meter = AverageMeter()
-    union_meter = AverageMeter()
-    target_meter = AverageMeter()
+
+    # updated
+    class_correct = np.zeros(args.classes)
+    class_total = np.zeros(args.classes)
+    total_correct = 0
+    total_samples = 0
 
     model.train()
     end = time.time()
     max_iter = args.epochs * len(train_loader)
+    sched_name = args.scheduler_name
+    optim_name = args.optimizer_name
+
     for i, (coord, feat, target, offset) in enumerate(train_loader):  # (n, 3), (n, c), (n), (b)
         data_time.update(time.time() - end)
         coord, feat, target, offset = coord.cuda(non_blocking=True), feat.cuda(non_blocking=True), target.cuda(non_blocking=True), offset.cuda(non_blocking=True)
         output = model([coord, feat, offset])
-        if target.shape[-1] == 1:
+        if target.shape[-1] == 1: # TODO: ?
             target = target[:, 0]  # for cls
         loss = criterion(output, target)
         optimizer.zero_grad()
         loss.backward()
+
+        if scheduler is not None and sched_name == 'onecycle' and optim_name == 'adamw':
+            total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
+            current_iter = epoch * len(train_loader) + i + 1
+            if current_iter % 10 == 0 and main_process():
+                writer.add_scalar('grad_norm_before_clip', total_norm, current_iter)
+
         optimizer.step()
 
-        output = output.max(1)[1]
-        n = coord.size(0)
-        if args.multiprocessing_distributed:
-            loss *= n
-            count = target.new_tensor([n], dtype=torch.long)
-            dist.all_reduce(loss), dist.all_reduce(count)
-            n = count.item()
-            loss /= n
-        intersection, union, target = intersectionAndUnionGPU(output, target, args.classes, args.ignore_label)
-        if args.multiprocessing_distributed:
-            dist.all_reduce(intersection), dist.all_reduce(union), dist.all_reduce(target)
-        intersection, union, target = intersection.cpu().numpy(), union.cpu().numpy(), target.cpu().numpy()
-        intersection_meter.update(intersection), union_meter.update(union), target_meter.update(target)
+        # updated
+        pred = output.max(1)[1]
+        correct = pred.eq(target).cpu()
 
-        accuracy = sum(intersection_meter.val) / (sum(target_meter.val) + 1e-10)
-        loss_meter.update(loss.item(), n)
+        if scheduler is not None and sched_name == 'onecycle':
+            scheduler.step()
+
+        for c in range(args.classes):
+            class_mask = (target.cpu() == c)
+            class_correct[c] += correct[class_mask].sum().item()
+            class_total[c] += class_mask.sum().item()
+
+        total_correct += correct.sum().item()
+        total_samples += target.size(0)
+
+        loss_meter.update(loss.item(), target.size(0))
         batch_time.update(time.time() - end)
         end = time.time()
 
@@ -273,6 +324,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
         remain_time = '{:02d}:{:02d}:{:02d}'.format(int(t_h), int(t_m), int(t_s))
 
         if (i + 1) % args.print_freq == 0 and main_process():
+            accuracy = total_correct / total_samples # updated
             logger.info('Epoch: [{}/{}][{}/{}] '
                         'Data {data_time.val:.3f} ({data_time.avg:.3f}) '
                         'Batch {batch_time.val:.3f} ({batch_time.avg:.3f}) '
@@ -284,19 +336,19 @@ def train(train_loader, model, criterion, optimizer, epoch):
                                                           loss_meter=loss_meter,
                                                           accuracy=accuracy))
         if main_process():
+            accuracy = total_correct / total_samples
             writer.add_scalar('loss_train_batch', loss_meter.val, current_iter)
-            writer.add_scalar('mIoU_train_batch', np.mean(intersection / (union + 1e-10)), current_iter)
-            writer.add_scalar('mAcc_train_batch', np.mean(intersection / (target + 1e-10)), current_iter)
-            writer.add_scalar('allAcc_train_batch', accuracy, current_iter)
+            writer.add_scalar('acc_train_batch', accuracy, current_iter)
 
-    iou_class = intersection_meter.sum / (union_meter.sum + 1e-10)
-    accuracy_class = intersection_meter.sum / (target_meter.sum + 1e-10)
-    mIoU = np.mean(iou_class)
-    mAcc = np.mean(accuracy_class)
-    allAcc = sum(intersection_meter.sum) / (sum(target_meter.sum) + 1e-10)
+    # updated
+    OA = total_correct / total_samples
+    class_accs = class_correct / (class_total + 1e-10)
+    mAcc = np.mean(class_accs)
+
     if main_process():
-        logger.info('Train result at epoch [{}/{}]: mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}.'.format(epoch+1, args.epochs, mIoU, mAcc, allAcc))
-    return loss_meter.avg, mIoU, mAcc, allAcc
+        logger.info('Train result at epoch [{}/{}]: mAcc/OA {:.4f}/{:.4f}.'.format(epoch+1, args.epochs, mAcc, OA))
+
+    return loss_meter.avg, mAcc, OA
 
 
 def validate(val_loader, model, criterion):
@@ -305,41 +357,42 @@ def validate(val_loader, model, criterion):
     batch_time = AverageMeter()
     data_time = AverageMeter()
     loss_meter = AverageMeter()
-    intersection_meter = AverageMeter()
-    union_meter = AverageMeter()
-    target_meter = AverageMeter()
+
+    # updated
+    class_correct = np.zeros(args.classes)
+    class_total = np.zeros(args.classes)
+    total_correct = 0
+    total_samples = 0
 
     model.eval()
     end = time.time()
     for i, (coord, feat, target, offset) in enumerate(val_loader):
         data_time.update(time.time() - end)
         coord, feat, target, offset = coord.cuda(non_blocking=True), feat.cuda(non_blocking=True), target.cuda(non_blocking=True), offset.cuda(non_blocking=True)
-        if target.shape[-1] == 1:
+        if target.shape[-1] == 1: # TODO: ?
             target = target[:, 0]  # for cls
         with torch.no_grad():
             output = model([coord, feat, offset])
         loss = criterion(output, target)
 
-        output = output.max(1)[1]
-        n = coord.size(0)
-        if args.multiprocessing_distributed:
-            loss *= n
-            count = target.new_tensor([n], dtype=torch.long)
-            dist.all_reduce(loss), dist.all_reduce(count)
-            n = count.item()
-            loss /= n
+        # updated
+        pred = output.max(1)[1]
+        correct = pred.eq(target).cpu()
 
-        intersection, union, target = intersectionAndUnionGPU(output, target, args.classes, args.ignore_label)
-        if args.multiprocessing_distributed:
-            dist.all_reduce(intersection), dist.all_reduce(union), dist.all_reduce(target)
-        intersection, union, target = intersection.cpu().numpy(), union.cpu().numpy(), target.cpu().numpy()
-        intersection_meter.update(intersection), union_meter.update(union), target_meter.update(target)
+        for c in range(args.classes):
+            class_mask = (target.cpu() == c)
+            class_correct[c] += correct[class_mask].sum().item()
+            class_total[c] += class_mask.sum().item()
 
-        accuracy = sum(intersection_meter.val) / (sum(target_meter.val) + 1e-10)
-        loss_meter.update(loss.item(), n)
+        total_correct += correct.sum().item()
+        total_samples += target.size(0)
+
+        loss_meter.update(loss.item(), target.size(0))
         batch_time.update(time.time() - end)
         end = time.time()
+
         if (i + 1) % args.print_freq == 0 and main_process():
+            accuracy = total_correct / total_samples
             logger.info('Test: [{}/{}] '
                         'Data {data_time.val:.3f} ({data_time.avg:.3f}) '
                         'Batch {batch_time.val:.3f} ({batch_time.avg:.3f}) '
@@ -350,19 +403,18 @@ def validate(val_loader, model, criterion):
                                                           loss_meter=loss_meter,
                                                           accuracy=accuracy))
 
-    iou_class = intersection_meter.sum / (union_meter.sum + 1e-10)
-    accuracy_class = intersection_meter.sum / (target_meter.sum + 1e-10)
-    mIoU = np.mean(iou_class)
-    mAcc = np.mean(accuracy_class)
-    allAcc = sum(intersection_meter.sum) / (sum(target_meter.sum) + 1e-10)
+    # updated
+    OA = total_correct / total_samples
+    class_accs = class_correct / (class_total + 1e-10)
+    mAcc = np.mean(class_accs)
 
     if main_process():
-        logger.info('Val result: mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}.'.format(mIoU, mAcc, allAcc))
+        logger.info('Val result: mAcc/OA {:.4f}/{:.4f}.'.format(mAcc, OA))
         for i in range(args.classes):
-            logger.info('Class_{} Result: iou/accuracy {:.4f}/{:.4f}.'.format(i, iou_class[i], accuracy_class[i]))
+            logger.info('Class_{} Result: accuracy {:.4f}.'.format(i, class_accs[i]))
         logger.info('<<<<<<<<<<<<<<<<< End Evaluation <<<<<<<<<<<<<<<<<')
 
-    return loss_meter.avg, mIoU, mAcc, allAcc
+    return loss_meter.avg, mAcc, OA
 
 
 if __name__ == '__main__':
