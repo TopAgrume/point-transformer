@@ -16,13 +16,14 @@ from lib.pointops.functions import pointops
 from util.profiler import latency_profiler
 
 class PointTransformerLayer(nn.Module):
-    def __init__(self, in_planes, out_planes, share_planes=8, nsample=16, pos_enc='relative'):
+    def __init__(self, in_planes, out_planes, share_planes=8, nsample=16, pos_enc='relative', stage='enc1'):
         super().__init__()
         self.mid_planes = mid_planes = out_planes // 1
         self.out_planes = out_planes
         self.share_planes = share_planes
         self.nsample = nsample
         self.pos_enc = pos_enc.lower()
+        self.stage = stage
 
         assert self.pos_enc in ['relative', 'absolute', 'none', 'magnitude'], "pos_enc must be -> 'relative', 'absolute', 'magnitude' or 'none'"
 
@@ -100,9 +101,10 @@ class PointTransformerLayer(nn.Module):
 
 
 class TransitionDown(nn.Module):
-    def __init__(self, in_planes, out_planes, stride=1, nsample=16):
+    def __init__(self, in_planes, out_planes, stride=1, nsample=16, stage='enc1'):
         super().__init__()
         self.stride, self.nsample = stride, nsample
+        self.stage = stage
         if stride != 1:
             self.linear = nn.Linear(3+in_planes, out_planes, bias=False)
             self.pool = nn.MaxPool1d(nsample)
@@ -211,14 +213,14 @@ class PointTransformerLayerScalar(nn.Module):
 class PointTransformerBlock(nn.Module):
     expansion = 1
 
-    def __init__(self, in_planes, planes, share_planes=8, nsample=16, pos_enc='relative', attn_type='vector'):
+    def __init__(self, in_planes, planes, share_planes=8, nsample=16, pos_enc='relative', attn_type='vector', stage='enc1'):
         super(PointTransformerBlock, self).__init__()
         self.linear1 = nn.Linear(in_planes, planes, bias=False)
         self.bn1 = nn.BatchNorm1d(planes)
 
         # layer based on ablation type
         if attn_type == 'vector':
-            self.transformer2 = PointTransformerLayer(planes, planes, share_planes, nsample, pos_enc)
+            self.transformer2 = PointTransformerLayer(planes, planes, share_planes, nsample, pos_enc, stage=stage)
         elif attn_type == 'scalar':
             self.transformer2 = PointTransformerLayerScalar(planes, planes, nsample)
         elif attn_type == 'mlp_pooling':
@@ -256,11 +258,11 @@ class PointTransformerCls(nn.Module):
         nsample = [num_neighbors_k] * 5 # [8, 16, 16, 16, 16]
 
         # encoder stages
-        self.enc1 = self._make_enc(block, planes[0], blocks[0], share_planes, stride=stride[0], nsample=nsample[0])  # N/1
-        self.enc2 = self._make_enc(block, planes[1], blocks[1], share_planes, stride=stride[1], nsample=nsample[1])  # N/4
-        self.enc3 = self._make_enc(block, planes[2], blocks[2], share_planes, stride=stride[2], nsample=nsample[2])  # N/16
-        self.enc4 = self._make_enc(block, planes[3], blocks[3], share_planes, stride=stride[3], nsample=nsample[3])  # N/64
-        self.enc5 = self._make_enc(block, planes[4], blocks[4], share_planes, stride=stride[4], nsample=nsample[4])  # N/256
+        self.enc1 = self._make_enc(block, planes[0], blocks[0], share_planes, stride=stride[0], nsample=nsample[0], stage='enc1')  # N/1
+        self.enc2 = self._make_enc(block, planes[1], blocks[1], share_planes, stride=stride[1], nsample=nsample[1], stage='enc2')  # N/4
+        self.enc3 = self._make_enc(block, planes[2], blocks[2], share_planes, stride=stride[2], nsample=nsample[2], stage='enc3')  # N/16
+        self.enc4 = self._make_enc(block, planes[3], blocks[3], share_planes, stride=stride[3], nsample=nsample[3], stage='enc4')  # N/64
+        self.enc5 = self._make_enc(block, planes[4], blocks[4], share_planes, stride=stride[4], nsample=nsample[4], stage='enc5')  # N/256
 
         # classification head -> MLP applied after global average pooling
         self.cls = nn.Sequential(
@@ -271,12 +273,12 @@ class PointTransformerCls(nn.Module):
             nn.Linear(256, k)
         )
 
-    def _make_enc(self, block, planes, blocks, share_planes=8, stride=1, nsample=16):
+    def _make_enc(self, block, planes, blocks, share_planes=8, stride=1, nsample=16, stage='enc1'):
         layers = []
-        layers.append(TransitionDown(self.in_planes, planes * block.expansion, stride, nsample))
+        layers.append(TransitionDown(self.in_planes, planes * block.expansion, stride, nsample, stage=stage))
         self.in_planes = planes * block.expansion
         for _ in range(1, blocks):
-            layers.append(block(self.in_planes, self.in_planes, share_planes, nsample=nsample, pos_enc=self.pos_enc, attn_type=self.attn_type))
+            layers.append(block(self.in_planes, self.in_planes, share_planes, nsample=nsample, pos_enc=self.pos_enc, attn_type=self.attn_type, stage=stage))
         return nn.Sequential(*layers)
 
     def forward(self, pxo):
