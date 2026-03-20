@@ -168,7 +168,7 @@ def main():
         'exp_sgd_onecycle': 'SGD + OneCycle'
     }
     plot_ablation_study(
-        df, "Optimizers & Schedulers", opt_runs, opt_labels,
+        df, "Optimizers & schedulers", opt_runs, opt_labels,
         "figures/generated_figures/ablation_optimizers.pdf"
     )
 
