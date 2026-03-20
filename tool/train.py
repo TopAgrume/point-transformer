@@ -123,14 +123,12 @@ def main_worker(gpu, ngpus_per_node, argss):
     if args.sync_bn:
        model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
 
-    # TODO
-    #train_transform = t.Compose([
-    #    t.RandomScale([0.85, 1.15]),
-    #    t.RandomRotate(),
-    #    t.RandomJitter(sigma=0.01)
-    #])
-
-    train_transform = t.Compose([t.RandomScale([0.9, 1.1]), t.ChromaticAutoContrast(), t.ChromaticTranslation(), t.ChromaticJitter(), t.HueSaturationTranslation()])
+    # classification transformations
+    train_transform = t.Compose([
+        t.RandomScale([0.85, 1.15]),
+        t.RandomRotate(),
+        t.RandomJitter(sigma=0.01)
+    ])
     train_data = ModelNet40(split='train', data_root=args.data_root, transform=train_transform, loop=args.loop)
 
     if args.distributed:
