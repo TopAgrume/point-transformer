@@ -43,9 +43,9 @@ Unzip the downloaded file and save it in `dataset/modelnet40_normal_resampled`.
 Note: Loading the dataset takes a long time during the first session because it caches the arrays directly into shared memory for fast access.
 
 **Shape classification on ModelNet40:**
-- Train the model: `sh tool/train.sh modelnet40 pointtransformer_cls`
+- Train a model (6 mn of caching): `sh tool/train.sh modelnet40 pointtransformer_cls`
 - Modify hyperparameters: Edit the configuration file located at `config/modelnet40/modelnet40_pointtransformer_cls.yaml`.
-- Test the model: `sh tool/test.sh modelnet40 pointtransformer_cls`
+- Test the best model (2 mn of caching): `sh tool/test.sh modelnet40 pointtransformer_cls`
 
 **Semantic segmentation on S3DIS:**\
 Take a look at the base unofficial implementation repository.
