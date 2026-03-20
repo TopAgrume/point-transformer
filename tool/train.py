@@ -363,8 +363,9 @@ def validate(val_loader, model, criterion, epoch):
     if main_process():
         logger.info('>>>>>>>>>>>>>>>> Start Evaluation >>>>>>>>>>>>>>>>')
 
-    latency_profiler.enabled = True
-    latency_profiler.reset()
+    latency_profiler.enabled = args.profile
+    if args.profile:
+        latency_profiler.reset()
 
     batch_time = AverageMeter()
     data_time = AverageMeter()
@@ -420,9 +421,10 @@ def validate(val_loader, model, criterion, epoch):
     latency_profiler.enabled = False
 
     if main_process():
-        csv_path = os.path.join(args.save_path, 'inference_latency_ms.csv')
-        latency_profiler.save_csv(csv_path, epoch)
-        latency_profiler.log_summary(logger)
+        if args.profile:
+            csv_path = os.path.join(args.save_path, 'inference_latency_ms.csv')
+            latency_profiler.save_csv(csv_path, epoch)
+            latency_profiler.log_summary(logger)
 
         logger.info('Val result: mAcc/OA {:.4f}/{:.4f}.'.format(mAcc, OA))
         for i in range(args.classes):
