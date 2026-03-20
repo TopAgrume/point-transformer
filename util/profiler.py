@@ -1,7 +1,6 @@
 """
 profiler.py
-Custom extension of Point Transformer (POSTECH-CVLab)
-Original implementation: https://github.com/POSTECH-CVLab/point-transformer
+Custom implementation.
 
 Author: Alexandre Devaux Rivière
 Project: NPM3D
