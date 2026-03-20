@@ -13,7 +13,7 @@ import torch.nn as nn
 import math
 
 from lib.pointops.functions import pointops
-
+from util.profiler import latency_profiler
 
 class PointTransformerLayer(nn.Module):
     def __init__(self, in_planes, out_planes, share_planes=8, nsample=16, pos_enc='relative'):
@@ -41,8 +41,14 @@ class PointTransformerLayer(nn.Module):
 
     def forward(self, pxo) -> torch.Tensor:
         p, x, o = pxo  # (n, 3), (n, c), (b)
-        x_q, x_k, x_v = self.linear_q(x), self.linear_k(x), self.linear_v(x)  # (n, c)
 
+        # ── QKV linear projections ──
+        t = latency_profiler.start()
+        x_q, x_k, x_v = self.linear_q(x), self.linear_k(x), self.linear_v(x)  # (n, c)
+        latency_profiler.end(t, self.stage, "QKV encoding")
+
+        # ── KNN grouping ──
+        t = latency_profiler.start()
         if self.pos_enc == 'relative':
             x_k = pointops.queryandgroup(self.nsample, p, p, x_k, None, o, o, use_xyz=True)  # (n, nsample, 3+c)
             x_v = pointops.queryandgroup(self.nsample, p, p, x_v, None, o, o, use_xyz=False)  # (n, nsample, c)
@@ -60,21 +66,35 @@ class PointTransformerLayer(nn.Module):
         else: # 'none'
             x_k = pointops.queryandgroup(self.nsample, p, p, x_k, None, o, o, use_xyz=False)
             x_v = pointops.queryandgroup(self.nsample, p, p, x_v, None, o, o, use_xyz=False)
+        latency_profiler.end(t, self.stage, "KNN query")
 
+        # ── Positional encoding MLP ──
         if self.pos_enc != 'none':
-            for i, layer in enumerate(self.linear_p): p_r = layer(p_r.transpose(1, 2).contiguous()).transpose(1, 2).contiguous() if i == 1 else layer(p_r)    # (n, nsample, c)
+            t = latency_profiler.start()
+            for i, layer in enumerate(self.linear_p):
+                p_r = layer(p_r.transpose(1, 2).contiguous()).transpose(1, 2).contiguous() if i == 1 else layer(p_r)    # (n, nsample, c)
+            latency_profiler.end(t, self.stage, "Relative positional encoding")
+
+        # ── Relation & attention-weight MLP ──
+        t = latency_profiler.start()
+        if self.pos_enc != 'none':
             w = x_k - x_q.unsqueeze(1) + p_r.view(p_r.shape[0], p_r.shape[1], self.out_planes // self.mid_planes, self.mid_planes).sum(2)  # (n, nsample, c)
         else:
             w = x_k - x_q.unsqueeze(1)
 
-        for i, layer in enumerate(self.linear_w): w = layer(w.transpose(1, 2).contiguous()).transpose(1, 2).contiguous() if i % 3 == 0 else layer(w)
+        for i, layer in enumerate(self.linear_w):
+            w = layer(w.transpose(1, 2).contiguous()).transpose(1, 2).contiguous() if i % 3 == 0 else layer(w)
         w = self.softmax(w)  # (n, nsample, c)
-        n, nsample, c = x_v.shape; s = self.share_planes
+        latency_profiler.end(t, self.stage, "Relation & weight encoding")
 
+        # ── Value aggregation ──
+        n, nsample, c = x_v.shape; s = self.share_planes
+        t = latency_profiler.start()
         if self.pos_enc != 'none':
             x = ((x_v + p_r).view(n, nsample, s, c // s) * w.unsqueeze(2)).sum(1).view(n, c)
         else:
             x = (x_v.view(n, nsample, s, c // s) * w.unsqueeze(2)).sum(1).view(n, c)
+        latency_profiler.end(t, self.stage, "Value aggregation")
 
         return x
 
@@ -93,6 +113,7 @@ class TransitionDown(nn.Module):
 
     def forward(self, pxo):
         p, x, o = pxo  # (n, 3), (n, c), (b)
+        t = latency_profiler.start()
         if self.stride != 1:
             n_o, count = [o[0].item() // self.stride], o[0].item() // self.stride
             for i in range(1, o.shape[0]):
@@ -107,6 +128,7 @@ class TransitionDown(nn.Module):
             p, o = n_p, n_o
         else:
             x = self.relu(self.bn(self.linear(x)))  # (n, c)
+        latency_profiler.end(t, self.stage, "FPS & downsample")
         return [p, x, o]
 
 
