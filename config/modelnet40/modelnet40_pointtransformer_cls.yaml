@@ -14,13 +14,13 @@ TRAIN:
   workers: 4
   batch_size: 16  # updated
   batch_size_val: 16
-  base_lr: 0.001 #0.025 # updated
+  base_lr: 0.025 #0.001 #0.025 # updated
   epochs: 100 # updated
   start_epoch: 0
   step_epoch: 30
   multiplier: 0.1
   momentum: 0.9
-  weight_decay: 0.01 #0.0001
+  weight_decay: 0.0001 #0.01
   drop_rate: 0.5
   manual_seed: 7777
   print_freq: 10
@@ -35,8 +35,9 @@ STUDY:
   num_neighbors_k: 8
   pos_enc: relative
   attn_type: vector
-  optimizer_name: adamw
-  scheduler_name: onecycle
+  optimizer_name: sgd
+  scheduler_name: multistep
+  profile: False
 
 Distributed:
   dist_url: tcp://localhost:8888
@@ -49,7 +50,7 @@ TEST:
   split: test # updated
   test_gpu: [0]
   test_workers: 4
-  batch_size_test: 32 # updated
+  batch_size_test: 16 # updated
   model_path:
   save_folder:
   names_path: data/modelnet40/modelnet40_shape_names.txt # updated

@@ -19,9 +19,12 @@ plt.rcParams.update({
     "axes.labelsize": 12,
 })
 
+LINESTYLES = ['-', '--', '-.', ':', (0, (3, 1, 1, 1))]
+
 def load_and_preprocess_data(csv_filepath):
     df = pd.read_csv(csv_filepath, names=["run", "tag", "step", "value", "wall_time"], header=0)
     return df
+
 
 def generate_summary_table(df):
     """accuracy Max and total time for each run"""
@@ -58,40 +61,50 @@ def generate_summary_table(df):
     print(summary_df)
     return summary_df
 
-def plot_ablation_study(df, study_name, runs_to_include, labels_dict, filename):
+def plot_ablation_study(df, study_name, runs_to_include, labels_dict, filename, smoothing=5, min=0.78):
     """accuracy evolution for ablation sutdy"""
-    plt.figure(figsize=(8, 5))
-    smoothing=5
+    fig, ax = plt.subplots(figsize=(9, 5))
+
     # filter specific run and validation tag
     study_data = df[(df['run'].isin(runs_to_include)) & (df['tag'] == 'allAcc_val')].copy()
-
     study_data['run_label'] = study_data['run'].map(labels_dict)
-
     study_data = study_data.sort_values('step')
+
+    # rolling mean per run to reduce noise
     study_data['value_smooth'] = (
         study_data.groupby('run_label')['value']
         .transform(lambda x: x.rolling(smoothing, min_periods=1, center=True).mean())
     )
 
-    # curve
-    ax = sns.lineplot(
-        data=study_data,
-        x="step",
-        y="value",
-        hue="run_label",
-        linewidth=2,
-        alpha=0.8
-    )
+    palette = sns.color_palette("tab10", n_colors=len(runs_to_include))
 
-    plt.title(f"Ablation study: {study_name}")
-    plt.xlabel("Epoch")
-    plt.ylabel("Overall accuracy (test)")
-    plt.ylim(0.75, 0.95)
-    plt.legend(title="Configuration:", loc='lower right')
-    plt.grid(True, linestyle='--', alpha=0.7)
-    plt.savefig(filename, format='pdf', dpi=300)
-    plt.close()
-    print(f"Graphique généré : {filename}")
+    # each run individually -> so we can assign both color and linestyle
+    for i, (_, label) in enumerate(labels_dict.items()):
+        run_data = study_data[study_data['run_label'] == label]
+        if run_data.empty:
+            continue
+
+        ax.plot(
+            run_data['step'],
+            run_data['value_smooth'],
+            label=label,
+            color=palette[i],
+            linestyle=LINESTYLES[i % len(LINESTYLES)],
+            linewidth=2,
+            alpha=0.9,
+        )
+
+    ax.set_title(f"Ablation study: {study_name}")
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Overall accuracy (test)")
+    y_max = study_data['value_smooth'].max()
+    ax.set_ylim(min, y_max + 0.01)
+    ax.grid(True, linestyle='--', alpha=0.7)
+    ax.legend(title="Configuration:", loc='lower right', fontsize=10)
+    fig.tight_layout(rect=[0, 0, 0.78, 1])
+    fig.savefig(filename, format='pdf', dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    print(f"Graphique généré: {filename}")
 
 def main():
     csv_path = "figures/csv/tensorboard_all_runs.csv"
@@ -114,7 +127,10 @@ def main():
         'exp_k_16': r'$k = 16$ (baseline)',
         'exp_k_24': r'$k = 24$'
     }
-    plot_ablation_study(df, r"Neighborhood size $k$", k_runs, k_labels, "figures/generated_figures/ablation_k.pdf")
+    plot_ablation_study(
+        df, r"Neighborhood size $k$", k_runs, k_labels,
+        "figures/generated_figures/ablation_k.pdf"
+    )
 
     # Attention strat
     att_runs = ['exp_k_8', 'exp_dot_product', 'exp_mlp', 'exp_mlp_pooling']
@@ -124,7 +140,10 @@ def main():
         'exp_mlp_pooling': 'MLP + pooling',
         'exp_mlp': 'MLP',
     }
-    plot_ablation_study(df, "Attention mechanism", att_runs, att_labels, "figures/generated_figures/ablation_attention.pdf")
+    plot_ablation_study(
+        df, "Attention mechanism", att_runs, att_labels,
+        "figures/generated_figures/ablation_attention.pdf"
+    )
 
     # Positional encoding
     pos_runs = ['exp_k_8', 'exp_absolute', 'exp_magnitude', 'exp_none']
@@ -134,7 +153,10 @@ def main():
         'exp_magnitude': 'Magnitude',
         'exp_none': 'None'
     }
-    plot_ablation_study(df, "Positional encoding", pos_runs, pos_labels, "figures/generated_figures/ablation_pos_enc.pdf")
+    plot_ablation_study(
+        df, "Positional encoding", pos_runs, pos_labels,
+        "figures/generated_figures/ablation_pos_enc.pdf"
+    )
 
     # Optimizers & schedulers
     opt_runs = ['exp_k_8', 'exp_adamw_oncycle_clip', 'exp_adamw_onecycle_no_clip', 'exp_madgrad_cosine', 'exp_sgd_onecycle']
@@ -145,7 +167,10 @@ def main():
         'exp_madgrad_cosine': 'MADGRAD + Cosine',
         'exp_sgd_onecycle': 'SGD + OneCycle'
     }
-    plot_ablation_study(df, "Optimizers & Schedulers", opt_runs, opt_labels, "figures/generated_figures/ablation_optimizers.pdf")
+    plot_ablation_study(
+        df, "Optimizers & Schedulers", opt_runs, opt_labels,
+        "figures/generated_figures/ablation_optimizers.pdf"
+    )
 
 if __name__ == "__main__":
     main()
