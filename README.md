@@ -11,6 +11,14 @@ This project proposes a study of the [Point Transformer](https://arxiv.org/abs/2
 - My primary goal is to reproduce the results of the original paper on the ModelNet40 shape classification task. This implementation achieves an overall accuracy of 92.7%, which is close to the 93.7% reported by the authors.
 - Beyond reproduction, the project includes a series of ablation studies and architectural modifications to better understand the behavior of the model.
 
+## Experimental results
+
+**Shape classification on ModelNet40:**
+| Model | Overall accuracy (OA) | Mean class accuracy (mAcc) |
+|-------|-----------------------|----------------------------|
+| Current implementation | 92.67% | 90.25% |
+| Original paper | **93.7%** | **90.6%** |
+
 ## My codebase additions and modifications
 * Created `model/pointtransformer/pointtransformer_cls.py` (massively adapted from the existing segmentation model pointtransformer_cls.py).
 * Created `util/modelnet40.py` to handle loading data specifically for the ModelNet40 dataset.
@@ -43,22 +51,26 @@ Note: Loading the dataset takes a long time during the first session because it 
 Take a look at the base unofficial implementation repository.
 
 
+## Checkpoints and training logs
+
+All experiments, model checkpoints, and training logs can be viewed and downloaded from the following link:
+[Download Checkpoints & Logs (Google Drive)](https://drive.google.com/drive/folders/1tE3P4D_KuZ0_yU5Ot1wu2gK9wgXfbFMX?usp=sharing)
+
+Once downloaded and unzipped, you can easily visualize the training curves and metrics using TensorBoard. Navigate to the extracted folder in your terminal and run:
+
+```bash
+tensorboard --logdir=.
+```
+
+The following window will appear:
+
+![Tensorboard](figures/image/tensorboard.png)
+
 ## Reproducing figures
 To reproduce the plots and graphs I used in the project report, run the following scripts:
 - `figures/treemap.py`
 - `figures/pareto.py`
 - `figures/graphs_generation_for_report.py`
-
-
-## Experimental Results
-
-**Shape classification on ModelNet40:**
-| Model | Overall accuracy (OA) | Mean class accuracy (mAcc) |
-|-------|-----------------------|----------------------------|
-| Current implementation | 92.67% | 90.25% |
-| Original paper | **93.7%** | **90.6%** |
-
-
 
 ## References
 
