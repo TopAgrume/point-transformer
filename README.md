@@ -1,6 +1,6 @@
 # Point Transformer
 
-This repository contains the code for the NPM3D Project (MVA 2025/2026) by, building upon the unofficial Point Transformer implementation (the code for the shape classification part of the model was never added).
+This repository contains my code and report for the NPM3D Project (MVA 2025/2026) by, building upon the unofficial Point Transformer implementation (the code for the shape classification part of the model was never added).
 
 - **My forked implementation**: https://github.com/TopAgrume/point-transformer
 - **Base unofficial implementation**: https://github.com/POSTECH-CVLab/point-transformer
