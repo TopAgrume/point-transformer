@@ -1,3 +1,9 @@
+"""
+data_util.py
+Source: Point Transformer (POSTECH-CVLab)
+Implementation: https://github.com/POSTECH-CVLab/point-transformer
+"""
+
 import numpy as np
 import random
 import SharedArray as SA

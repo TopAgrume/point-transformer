@@ -1,3 +1,9 @@
+"""
+setup.py
+Source: Point Transformer (POSTECH-CVLab)
+Implementation: https://github.com/POSTECH-CVLab/point-transformer
+"""
+
 #python3 setup.py install
 from setuptools import setup
 from torch.utils.cpp_extension import BuildExtension, CUDAExtension

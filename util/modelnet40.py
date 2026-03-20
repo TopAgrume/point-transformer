@@ -1,3 +1,13 @@
+"""
+modelnet40.py
+Custom extension of Point Transformer (POSTECH-CVLab)
+Original implementation: https://github.com/POSTECH-CVLab/point-transformer
+
+Author: Alexandre Devaux Rivière
+Project: NPM3D
+Date: 20/03/2026
+"""
+
 import os
 import numpy as np
 import torch
@@ -14,24 +24,22 @@ class ModelNet40(Dataset):
         self.transform = transform
         self.loop = loop
 
-        # 1. Load shape names to map categories to labels (0-39)
+        # categories to labels mapping
         shape_names_path = os.path.join(data_root, 'modelnet40_shape_names.txt')
         with open(shape_names_path, 'r') as f:
             shape_names = [line.strip() for line in f.readlines()]
         self.classes = dict(zip(shape_names, range(len(shape_names))))
 
-        # 2. Load the specific split list (train or test)
+        # specific split list loading: train or test
         split_list_path = os.path.join(data_root, f'modelnet40_{split}.txt')
         with open(split_list_path, 'r') as f:
             self.data_list = [line.strip() for line in f.readlines()]
 
-        # 3. Cache data into SharedArray for fast, multi-worker memory access
+        # cache data into SharedArray for fast multi-worker memory access
         for item in self.data_list:
             if not os.path.exists(f"/dev/shm/{item}"):
                 category = '_'.join(item.split('_')[0:-1])
 
-                # ModelNet40 is commonly stored as comma-separated .txt files
-                # (x, y, z, nx, ny, nz) but we also check for .npy to support pre-processed data
                 data_path_txt = os.path.join(data_root, category, item + '.txt')
                 data_path_npy = os.path.join(data_root, category, item + '.npy')
 
@@ -49,23 +57,23 @@ class ModelNet40(Dataset):
         data_idx = self.data_idx[idx % len(self.data_idx)]
         item_name = self.data_list[data_idx]
 
-        # Extract the global classification label from the filename
+        # global classification label extraction from the filename
         category = '_'.join(item_name.split('_')[0:-1])
         label = self.classes[category]
 
-        # Attach to the shared memory array
+        # sent to RAM
         data = SA.attach(f"shm://{item_name}").copy()
 
-        # Separate coordinates and normal vectors
+        # coordinates and normal vectors separation
         coord, feat = data[:, 0:3], data[:, 3:6]
 
-        # Uniformly sample points if the shape exceeds num_points
+        # uniformly sample points
         if coord.shape[0] > self.num_points:
             choice = np.random.choice(coord.shape[0], self.num_points, replace=False)
             coord = coord[choice, :]
             feat = feat[choice, :]
 
-        # Apply spatial augmentations (e.g., RandomScale, RandomTranslate)
+        # spatial augmentations
         if self.transform is not None:
             coord, feat, label = self.transform(coord, feat, label)
 

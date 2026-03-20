@@ -1,3 +1,13 @@
+"""
+train.py
+Custom extension of Point Transformer (POSTECH-CVLab)
+Original implementation: https://github.com/POSTECH-CVLab/point-transformer
+
+Author: Alexandre Devaux Rivière
+Project: NPM3D
+Date: 20/03/2026
+"""
+
 import os
 import time
 import random
@@ -18,14 +28,15 @@ import torch.optim.lr_scheduler as lr_scheduler
 from tensorboardX import SummaryWriter
 
 from util import config
-from util.modelnet40 import ModelNet40 # updated
-from util.common_util import AverageMeter, intersectionAndUnionGPU, find_free_port
+from util.modelnet40 import ModelNet40
+from util.common_util import AverageMeter, find_free_port
 from util.data_util import collate_fn
 from util import transform as t
 
+import csv
+from util.profiler import latency_profiler
 
 def get_parser():
-    # updated
     parser = argparse.ArgumentParser(description='PyTorch Point Cloud Classification')
     parser.add_argument('--config', type=str, default='config/modelnet40/modelnet40_pointtransformer.yaml', help='config file')
     parser.add_argument('opts', help='see config/modelnet40/modelnet40_pointtransformer.yaml for all options', default=None, nargs=argparse.REMAINDER)
@@ -77,7 +88,7 @@ def main():
         args.distributed = False
         args.multiprocessing_distributed = False
 
-    if args.data_name == 'modelnet40': # updated
+    if args.data_name == 'modelnet40':
         ModelNet40(split='train', data_root=args.data_root)
         ModelNet40(split='test', data_root=args.data_root)
     else:
@@ -92,7 +103,7 @@ def main():
 
 
 def main_worker(gpu, ngpus_per_node, argss):
-    global args, best_acc # updated
+    global args, best_acc
     args, best_acc = argss, 0
     if args.distributed:
         if args.dist_url == "env://" and args.rank == -1:
@@ -101,7 +112,6 @@ def main_worker(gpu, ngpus_per_node, argss):
             args.rank = args.rank * ngpus_per_node + gpu
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url, world_size=args.world_size, rank=args.rank)
 
-    # updated
     if args.arch == 'pointtransformer_cls':
         from model.pointtransformer.pointtransformer_cls import pointtransformer_cls as Model
     else:
@@ -113,7 +123,13 @@ def main_worker(gpu, ngpus_per_node, argss):
     if args.sync_bn:
        model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
 
-    # updated
+    # TODO
+    #train_transform = t.Compose([
+    #    t.RandomScale([0.85, 1.15]),
+    #    t.RandomRotate(),
+    #    t.RandomJitter(sigma=0.01)
+    #])
+
     train_transform = t.Compose([t.RandomScale([0.9, 1.1]), t.ChromaticAutoContrast(), t.ChromaticTranslation(), t.ChromaticJitter(), t.HueSaturationTranslation()])
     train_data = ModelNet40(split='train', data_root=args.data_root, transform=train_transform, loop=args.loop)
 
@@ -123,8 +139,6 @@ def main_worker(gpu, ngpus_per_node, argss):
         train_sampler = None
     train_loader = torch.utils.data.DataLoader(train_data, batch_size=args.batch_size, shuffle=(train_sampler is None), num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True, collate_fn=collate_fn)
 
-
-    # updated
     criterion = nn.CrossEntropyLoss().cuda()
 
     opt_name = args.optimizer_name
@@ -193,7 +207,7 @@ def main_worker(gpu, ngpus_per_node, argss):
             optimizer.load_state_dict(checkpoint['optimizer'])
             scheduler.load_state_dict(checkpoint['scheduler'])
             #best_acc = 40.0
-            best_acc = checkpoint['best_acc'] # updated
+            best_acc = checkpoint['best_acc']
             if main_process():
                 logger.info("=> loaded checkpoint '{}' (epoch {})".format(args.resume, checkpoint['epoch']))
         else:
@@ -206,7 +220,6 @@ def main_worker(gpu, ngpus_per_node, argss):
     val_loader = None
     if args.evaluate:
         val_transform = None
-        # updated
         val_data = ModelNet40(split='test', data_root=args.data_root, transform=val_transform)
         if args.distributed:
             val_sampler = torch.utils.data.distributed.DistributedSampler(val_data)
@@ -217,7 +230,6 @@ def main_worker(gpu, ngpus_per_node, argss):
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             train_sampler.set_epoch(epoch)
-        # updated
         loss_train, mAcc_train, OA_train = train(train_loader, model, criterion, optimizer, epoch, scheduler)
         current_lr = optimizer.param_groups[0]['lr']
 
@@ -236,8 +248,7 @@ def main_worker(gpu, ngpus_per_node, argss):
             if args.data_name == 'shapenet':
                 raise NotImplementedError()
             else:
-                # updated
-                loss_val, mAcc_val, OA_val = validate(val_loader, model, criterion)
+                loss_val, mAcc_val, OA_val = validate(val_loader, model, criterion, epoch_log)
 
             if main_process():
                 writer.add_scalar('loss_val', loss_val, epoch_log)
@@ -265,7 +276,6 @@ def train(train_loader, model, criterion, optimizer, epoch, scheduler=None):
     data_time = AverageMeter()
     loss_meter = AverageMeter()
 
-    # updated
     class_correct = np.zeros(args.classes)
     class_total = np.zeros(args.classes)
     total_correct = 0
@@ -281,7 +291,7 @@ def train(train_loader, model, criterion, optimizer, epoch, scheduler=None):
         data_time.update(time.time() - end)
         coord, feat, target, offset = coord.cuda(non_blocking=True), feat.cuda(non_blocking=True), target.cuda(non_blocking=True), offset.cuda(non_blocking=True)
         output = model([coord, feat, offset])
-        if target.shape[-1] == 1: # TODO: ?
+        if target.shape[-1] == 1:
             target = target[:, 0]  # for cls
         loss = criterion(output, target)
         optimizer.zero_grad()
@@ -296,7 +306,6 @@ def train(train_loader, model, criterion, optimizer, epoch, scheduler=None):
 
         optimizer.step()
 
-        # updated
         pred = output.max(1)[1]
         correct = pred.eq(target).cpu()
 
@@ -324,7 +333,7 @@ def train(train_loader, model, criterion, optimizer, epoch, scheduler=None):
         remain_time = '{:02d}:{:02d}:{:02d}'.format(int(t_h), int(t_m), int(t_s))
 
         if (i + 1) % args.print_freq == 0 and main_process():
-            accuracy = total_correct / total_samples # updated
+            accuracy = total_correct / total_samples
             logger.info('Epoch: [{}/{}][{}/{}] '
                         'Data {data_time.val:.3f} ({data_time.avg:.3f}) '
                         'Batch {batch_time.val:.3f} ({batch_time.avg:.3f}) '
@@ -340,7 +349,6 @@ def train(train_loader, model, criterion, optimizer, epoch, scheduler=None):
             writer.add_scalar('loss_train_batch', loss_meter.val, current_iter)
             writer.add_scalar('acc_train_batch', accuracy, current_iter)
 
-    # updated
     OA = total_correct / total_samples
     class_accs = class_correct / (class_total + 1e-10)
     mAcc = np.mean(class_accs)
@@ -351,14 +359,17 @@ def train(train_loader, model, criterion, optimizer, epoch, scheduler=None):
     return loss_meter.avg, mAcc, OA
 
 
-def validate(val_loader, model, criterion):
+def validate(val_loader, model, criterion, epoch):
     if main_process():
         logger.info('>>>>>>>>>>>>>>>> Start Evaluation >>>>>>>>>>>>>>>>')
+
+    latency_profiler.enabled = True
+    latency_profiler.reset()
+
     batch_time = AverageMeter()
     data_time = AverageMeter()
     loss_meter = AverageMeter()
 
-    # updated
     class_correct = np.zeros(args.classes)
     class_total = np.zeros(args.classes)
     total_correct = 0
@@ -367,15 +378,15 @@ def validate(val_loader, model, criterion):
     model.eval()
     end = time.time()
     for i, (coord, feat, target, offset) in enumerate(val_loader):
+        latency_profiler.on_batch_start()
         data_time.update(time.time() - end)
         coord, feat, target, offset = coord.cuda(non_blocking=True), feat.cuda(non_blocking=True), target.cuda(non_blocking=True), offset.cuda(non_blocking=True)
-        if target.shape[-1] == 1: # TODO: ?
+        if target.shape[-1] == 1:
             target = target[:, 0]  # for cls
         with torch.no_grad():
             output = model([coord, feat, offset])
         loss = criterion(output, target)
 
-        # updated
         pred = output.max(1)[1]
         correct = pred.eq(target).cpu()
 
@@ -403,12 +414,16 @@ def validate(val_loader, model, criterion):
                                                           loss_meter=loss_meter,
                                                           accuracy=accuracy))
 
-    # updated
     OA = total_correct / total_samples
     class_accs = class_correct / (class_total + 1e-10)
     mAcc = np.mean(class_accs)
+    latency_profiler.enabled = False
 
     if main_process():
+        csv_path = os.path.join(args.save_path, 'inference_latency_ms.csv')
+        latency_profiler.save_csv(csv_path, epoch)
+        latency_profiler.log_summary(logger)
+
         logger.info('Val result: mAcc/OA {:.4f}/{:.4f}.'.format(mAcc, OA))
         for i in range(args.classes):
             logger.info('Class_{} Result: accuracy {:.4f}.'.format(i, class_accs[i]))

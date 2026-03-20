@@ -1,3 +1,9 @@
+"""
+pointops.py
+Source: Point Transformer (POSTECH-CVLab)
+Implementation: https://github.com/POSTECH-CVLab/point-transformer
+"""
+
 from typing import Tuple
 
 import torch

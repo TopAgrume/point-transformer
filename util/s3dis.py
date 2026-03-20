@@ -1,3 +1,9 @@
+"""
+s3dis.py
+Source: Point Transformer (POSTECH-CVLab)
+Implementation: https://github.com/POSTECH-CVLab/point-transformer
+"""
+
 import os
 
 import numpy as np

@@ -1,3 +1,13 @@
+"""
+test.py
+Custom extension of Point Transformer (POSTECH-CVLab)
+Original implementation: https://github.com/POSTECH-CVLab/point-transformer
+
+Author: Alexandre Devaux Rivière
+Project: NPM3D
+Date: 20/03/2026
+"""
+
 import os
 import time
 import random
@@ -14,8 +24,7 @@ import torch.optim
 import torch.utils.data
 
 from util import config
-from util.common_util import AverageMeter, intersectionAndUnion, check_makedirs
-# updated
+from util.common_util import AverageMeter, check_makedirs
 from util.modelnet40 import ModelNet40
 from util.data_util import collate_fn
 
@@ -54,15 +63,14 @@ def main():
     logger.info("=> creating model ...")
     logger.info("Classes: {}".format(args.classes))
 
-    if args.arch == 'pointtransformer_seg_repro': # updated
+    if args.arch == 'pointtransformer_cls':
         from model.pointtransformer.pointtransformer_cls import pointtransformer_cls as Model
     else:
         raise Exception('architecture not supported yet'.format(args.arch))
     model = Model(c=args.fea_dim, k=args.classes).cuda()
     logger.info(model)
-    criterion = nn.CrossEntropyLoss().cuda() # updated
+    criterion = nn.CrossEntropyLoss().cuda()
 
-    # updated
     if args.names_path and os.path.exists(args.names_path):
         names = [line.rstrip('\n') for line in open(args.names_path)]
     else:
@@ -90,7 +98,7 @@ def input_normalize(coord, feat):
     return coord, feat
 
 
-def test(model, criterion, names): # updated
+def test(model, criterion, names):
     logger.info('>>>>>>>>>>>>>>>> Start Evaluation >>>>>>>>>>>>>>>>')
     batch_time = AverageMeter()
     model.eval()

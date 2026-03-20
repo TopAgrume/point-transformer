@@ -1,3 +1,9 @@
+"""
+pointtransformer_seg.py
+Source: Point Transformer (POSTECH-CVLab)
+Implementation: https://github.com/POSTECH-CVLab/point-transformer
+"""
+
 import torch
 import torch.nn as nn
 
@@ -20,7 +26,7 @@ class PointTransformerLayer(nn.Module):
                                     nn.BatchNorm1d(mid_planes // share_planes), nn.ReLU(inplace=True),
                                     nn.Linear(out_planes // share_planes, out_planes // share_planes))
         self.softmax = nn.Softmax(dim=1)
-        
+
     def forward(self, pxo) -> torch.Tensor:
         p, x, o = pxo  # (n, 3), (n, c), (b)
         x_q, x_k, x_v = self.linear_q(x), self.linear_k(x), self.linear_v(x)  # (n, c)
@@ -47,7 +53,7 @@ class TransitionDown(nn.Module):
             self.linear = nn.Linear(in_planes, out_planes, bias=False)
         self.bn = nn.BatchNorm1d(out_planes)
         self.relu = nn.ReLU(inplace=True)
-        
+
     def forward(self, pxo):
         p, x, o = pxo  # (n, 3), (n, c), (b)
         if self.stride != 1:
@@ -76,7 +82,7 @@ class TransitionUp(nn.Module):
         else:
             self.linear1 = nn.Sequential(nn.Linear(out_planes, out_planes), nn.BatchNorm1d(out_planes), nn.ReLU(inplace=True))
             self.linear2 = nn.Sequential(nn.Linear(in_planes, out_planes), nn.BatchNorm1d(out_planes), nn.ReLU(inplace=True))
-        
+
     def forward(self, pxo1, pxo2=None):
         if pxo2 is None:
             _, x, o = pxo1  # (n, 3), (n, c), (b)

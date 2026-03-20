@@ -1,3 +1,9 @@
+"""
+config.py
+Source: Point Transformer (POSTECH-CVLab)
+Implementation: https://github.com/POSTECH-CVLab/point-transformer
+"""
+
 # -----------------------------------------------------------------------------
 # Functions for parsing args
 # -----------------------------------------------------------------------------
