@@ -52,7 +52,7 @@ To reproduce the plots and graphs I used in the project report, run the followin
 
 ## Experimental Results
 
-**Shape classification on ModelNet40**
+**Shape classification on ModelNet40:**
 | Model | Overall accuracy (OA) | Mean class accuracy (mAcc) |
 |-------|-----------------------|----------------------------|
 | Current implementation | 92.67% | 90.25% |
