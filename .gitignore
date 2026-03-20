@@ -21,7 +21,7 @@ point_transformer/data/modelnet40_normal_resampled_cache/
 point_transformer/data/modelnet40_ply_hdf5_2048/
 dataset/
 exp*
-PTv1_all_exp/
+NPM3D_PointTransformerv1_all_exp/
 
 .ipynb_checkpoints/
 point_transformer/models/test.py
